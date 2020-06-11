@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+#The basics
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      EnableDnsHostnames: True
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+#Setting up the subnets. Requires 3 AZ's
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      CidrBlock: "10.0.0.0/24"
+      VpcId: !Ref VPC
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      CidrBlock: "10.0.2.0/24"
+      VpcId: !Ref VPC
+  PublicSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}c"
+      CidrBlock: "10.0.4.0/24"
+      VpcId: !Ref VPC
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      CidrBlock: "10.0.1.0/24"
+      VpcId: !Ref VPC
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      CidrBlock: "10.0.3.0/24"
+      VpcId: !Ref VPC
+  PrivateSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}c"
+      CidrBlock: "10.0.5.0/24"
+      VpcId: !Ref VPC
+#Setup Nat Gateway
+  NATIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPCGatewayAttachment
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !Ref NATIP
+      SubnetId: !Ref PublicSubnetA
+
+#Setup RouteTables
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+#Setup Public Route Rule
+  PublicRouteToInternetGateway:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+       RouteTableId: !Ref RouteTablePublic
+       DestinationCidrBlock: "0.0.0.0/0" #Internet
+       GatewayId: !Ref InternetGateway
+#Setup Private Route Rule > Nat Gateway
+  PrivateRouteToNatGateway:
+    Type: AWS::EC2::Route
+    DependsOn: NATGateway  
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate
+      DestinationCidrBlock: "0.0.0.0/0" #Internet
+      NatGatewayId: !Ref NATGateway
