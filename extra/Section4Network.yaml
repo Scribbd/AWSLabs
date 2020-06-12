@@ -53,12 +53,17 @@ Resources:
       VpcId: !Ref VPC
 #Setup Nat Gateway
   NATIP:
-    Type: AWS::EC2::EIP
     DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
   NATGateway:
     Type: AWS::EC2::NatGateway
     Properties:
-      AllocationId: !Ref NATIP
+      AllocationId:
+         Fn::GetAtt:
+         - NATIP
+         - AllocationId
       SubnetId: !Ref PublicSubnetA
 
 #Setup RouteTables
@@ -81,8 +86,9 @@ Resources:
 #Setup Private Route Rule > Nat Gateway
   PrivateRouteToNatGateway:
     Type: AWS::EC2::Route
-    DependsOn: NATGateway  
     Properties:
       RouteTableId: !Ref RouteTablePrivate
       DestinationCidrBlock: "0.0.0.0/0" #Internet
       NatGatewayId: !Ref NATGateway
+
+#Section NAcls and Security Groups

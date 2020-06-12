@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This is a template to automatically deploy the excersice given in Section 5 about endpoints
+  This template was created as a challenge and eliminate the human error component.
+  It will create 2 VPCs and 2 subnets, use an ELB, endpoint-service, and 2 micro instances.
+  Also the auto-rollback feature is great.
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  InstanceType:
+      Description: Select your Free Tier type. (This will most likely be t2.micro, however if you are using Stockholm it must be t3.micro)
+      Type: String
+      Default: t2.micro
+      AllowedValues:
+        - t2.micro
+        - t3.micro
+  UserScript:
+    Description: The script provided by Neal, don't forget to change to your own bucket!
+    Type: String
+    Default: >-
+      #!/bin/bash
+      yum update -y
+      yum install httpd -y
+      systemctl start httpd
+      systemctl enable httpd
+      cd /var/www/html
+      aws s3 cp s3://dctlabs/names.csv ./
+      aws s3 cp s3://dctlabs/index.txt ./
+      EC2NAME=`cat ./names.csv|sort -R|head -n 1|xargs` 
+      sed "s/INSTANCE/$EC2NAME/" index.txt > index.html
+
+Resources:
+#Setting up the networking of both VPCs
+#VPC with public subnet and IG
+  VPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      EnableDnsHostnames: True
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC1
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      CidrBlock: "10.0.0.0/24"
+      VpcId: !Ref VPC1
+#Setup RouteTables with public access
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+#Setup Public Route Rule
+  PublicRouteToInternetGateway:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+       RouteTableId: !Ref RouteTablePublic
+       DestinationCidrBlock: "0.0.0.0/0" #Internet
+       GatewayId: !Ref InternetGateway
+
+#VPC wihtout public subnet (also no IG)
+  VPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+  RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      CidrBlock: "10.0.0.0/24"
+      VpcId: !Ref VPC2
+
+
+#Setting up EC2 resources
+#Security Groups
+  PublicSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enables SSH Ingress and HTTP outgress
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0" #All
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0" #All
+      VpcId: !Ref VPC1
+  PrivateSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Only allows HTML Ingress from a Network Load Balancer
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0" #All
+      VpcId: !Ref VPC2
+  S3AccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      RoleName: S3StackAccessRole
+  WebServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: S3StackAccessRole
+      Roles:
+        - !Ref S3AccessRole
+#EC2 instances
+  EC2Public:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      #CreditSpecification: standard
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroups:
+        - !Ref PublicSecurityGroup
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
+  
+  WebserverPrivate:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      #CreditSpecification: standard
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroups:
+        - !Ref PrivateSecurityGroup
+      UserData: !Ref UserScript
+      IamInstanceProfile: !Ref WebServerInstanceProfile
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
+
+#Setting up the Endpoint Service resources
+  ElasticLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: network
+      Scheme: internal
+      Subnets:
+        - !Ref PrivateSubnetA
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      Targets:
+        - Id: !Ref WebserverPrivate
+      VpcId: !Ref VPC2
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref ElasticLoadBalancer
+      Port: 80
+      Protocol: HTTP
+#Setting up the Endpoint Service
+  EndpointService:
+    Type: AWS::EC2::VPCEndpointService
+    Properties: 
+      AcceptanceRequired: True
+      NetworkLoadBalancerArns: 
+        - !Ref ElasticLoadBalancer
+  EndPoint:
+    DependsOn:
+      - ElasticLoadBalancer
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: WebServerPoint
+      VpcId: !Ref VPC1
+  EndpointPermission:
+    Type: AWS::EC2::VPCEndpointServicePermissions
+    Properties:
+      ServiceId: !Ref EndpointService
+      AllowedPrincipals:
+        - !Ref EndPoint
+  
