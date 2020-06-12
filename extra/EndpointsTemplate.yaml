@@ -19,20 +19,23 @@ Parameters:
       AllowedValues:
         - t2.micro
         - t3.micro
-  UserScript:
-    Description: The script provided by Neal, don't forget to change to your own bucket!
+  S3BucketName:
     Type: String
-    Default: >-
-      #!/bin/bash
-      yum update -y
-      yum install httpd -y
-      systemctl start httpd
-      systemctl enable httpd
-      cd /var/www/html
-      aws s3 cp s3://dctlabs/names.csv ./
-      aws s3 cp s3://dctlabs/index.txt ./
-      EC2NAME=`cat ./names.csv|sort -R|head -n 1|xargs` 
-      sed "s/INSTANCE/$EC2NAME/" index.txt > index.html
+    Default: dctlabs
+  # UserScript:
+  #   Description: The script provided by Neal, don't forget to change to your own bucket!
+  #   Type: String
+  #   Value: |
+  #     #!/bin/bash
+  #     yum update -y
+  #     yum install httpd -y
+  #     systemctl start httpd
+  #     systemctl enable httpd
+  #     cd /var/www/html
+  #     aws s3 cp s3://$buck/names.csv ./
+  #     aws s3 cp s3://$buck/index.txt ./
+  #     EC2NAME=`cat ./names.csv|sort -R|head -n 1|xargs` 
+  #     sed "s/INSTANCE/$EC2NAME/" index.txt > index.html
 
 Resources:
 #Setting up the networking of both VPCs
@@ -143,7 +146,7 @@ Resources:
       KeyName: !Ref KeyName
       #CreditSpecification: standard
       SubnetId: !Ref PublicSubnetA
-      SecurityGroups:
+      SecurityGroupIds:
         - !Ref PublicSecurityGroup
     CreationPolicy:
       ResourceSignal:
@@ -157,10 +160,22 @@ Resources:
       KeyName: !Ref KeyName
       #CreditSpecification: standard
       SubnetId: !Ref PrivateSubnetA
-      SecurityGroups:
+      SecurityGroupIds:
         - !Ref PrivateSecurityGroup
-      UserData: !Ref UserScript
       IamInstanceProfile: !Ref WebServerInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install httpd -y
+          systemctl start httpd
+          systemctl enable httpd
+          cd /var/www/html
+          aws s3 cp s3://${ S3BucketName }/names.csv ./
+          aws s3 cp s3://${ S3BucketName }/index.txt ./
+          EC2NAME=`cat ./names.csv|sort -R|head -n 1|xargs` 
+          sed "s/INSTANCE/$EC2NAME/" index.txt > index.html
+
     CreationPolicy:
       ResourceSignal:
         Timeout: PT5M
@@ -202,7 +217,7 @@ Resources:
       - ElasticLoadBalancer
     Type: AWS::EC2::VPCEndpoint
     Properties:
-      ServiceName: WebServerPoint
+      ServiceName: !Sub com.amazonaws.vpce.${ AWS::Region }.${ !Ref EndpointService }
       VpcId: !Ref VPC1
   EndpointPermission:
     Type: AWS::EC2::VPCEndpointServicePermissions
@@ -211,3 +226,5 @@ Resources:
       AllowedPrincipals:
         - !Ref EndPoint
   
+#Give info to
+Outputs:
