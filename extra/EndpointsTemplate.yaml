@@ -15,13 +15,13 @@ Parameters:
   InstanceType:
       Description: Select your Free Tier type. (This will most likely be t2.micro, however if you are using Stockholm it must be t3.micro)
       Type: String
-      Default: t2.micro
+      Default: t3.micro
       AllowedValues:
         - t2.micro
         - t3.micro
   S3BucketName:
     Type: String
-    Default: dctlabs
+    Default: scribbd
   # UserScript:
   #   Description: The script provided by Neal, don't forget to change to your own bucket!
   #   Type: String
@@ -45,6 +45,9 @@ Resources:
     Properties:
       CidrBlock: "10.0.0.0/16"
       EnableDnsHostnames: True
+      Tags: 
+      - Key: "Name"
+        Value: "Public VPC"
   InternetGateway:
     Type: AWS::EC2::InternetGateway
   VPCGatewayAttachment:
@@ -69,15 +72,23 @@ Resources:
     Type: AWS::EC2::Route
     DependsOn: VPCGatewayAttachment
     Properties:
-       RouteTableId: !Ref RouteTablePublic
-       DestinationCidrBlock: "0.0.0.0/0" #Internet
-       GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref RouteTablePublic
+      DestinationCidrBlock: "0.0.0.0/0" #Internet
+      GatewayId: !Ref InternetGateway
+  PublicAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref PublicSubnetA
 
-#VPC wihtout public subnet (also no IG)
+#VPC without public subnet (also no IG)
   VPCPrivate:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: "10.0.0.0/16"
+      Tags: 
+      - Key: "Name"
+        Value: "Private VPC"
   RouteTablePrivate:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -88,7 +99,11 @@ Resources:
       AvailabilityZone: !Sub "${AWS::Region}a"
       CidrBlock: "10.0.0.0/24"
       VpcId: !Ref VPCPrivate
-
+  PrivateAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate
+      SubnetId: !Ref PrivateSubnetA
 
 #Setting up EC2 resources
 #Security Groups
@@ -149,9 +164,9 @@ Resources:
       SubnetId: !Ref PublicSubnetA
       SecurityGroupIds:
         - !Ref PublicSecurityGroup
-    # CreationPolicy:
-    #   ResourceSignal:
-    #     Timeout: PT5M
+      Tags: 
+      - Key: "Name"
+        Value: "Public Server"
   
   WebserverPrivate:
     Type: AWS::EC2::Instance
@@ -176,10 +191,9 @@ Resources:
           aws s3 cp s3://${ S3BucketName }/index.txt ./
           EC2NAME=`cat ./names.csv|sort -R|head -n 1|xargs` 
           sed "s/INSTANCE/$EC2NAME/" index.txt > index.html
-
-    # CreationPolicy:
-    #   ResourceSignal:
-    #     Timeout: PT5M
+      Tags: 
+      - Key: "Name"
+        Value: "Private WebServer"
 
 #Setting up the Endpoint Service resources
   ElasticLoadBalancer:
@@ -213,21 +227,24 @@ Resources:
       AcceptanceRequired: True
       NetworkLoadBalancerArns: 
         - !Ref ElasticLoadBalancer
-  # EndPoint:
-  #   Type: AWS::EC2::VPCEndpoint
-  #   Properties:
-  #     ServiceName: !Sub com.amazonaws.vpce.${ AWS::Region }.${ EndpointService }
-  #     VpcId: !Ref VPCPublic
-  #     RouteTableIds:
-  #       - !Ref RouteTablePublic
+  EndPoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.vpce.${ AWS::Region }.${ EndpointService }
+      VpcId: !Ref VPCPublic
+      SubnetIds:
+        - !Ref PublicSubnetA
   # EndpointPermission:
   #   Type: AWS::EC2::VPCEndpointServicePermissions
+  #   DependsOn:
+  #     - EndPoint
   #   Properties:
   #     ServiceId: !Ref EndpointService
   #     AllowedPrincipals:
-  #       - !Ref EndPoint
+  #       - '*'
   
-#Give info to
+#Give info to user
 Outputs:
   ServiceNameCheck:
     Description: This is the endpoint name that I generated.
@@ -237,4 +254,9 @@ Outputs:
     Value: !GetAtt EC2Public.PublicIp
   SSHCommand:
     Description: CopyPaste in your ssh console
-    Value: !Sub ssh -i ${ KeyName }.pem ec2user@${ EC2Public.PublicIp }
+    Value: !Sub ssh -i ${ KeyName }.pem ec2-user@${ EC2Public.PublicIp }
+  EndpointDNSName:
+    Description: What you get.
+    Value: !Join 
+        - ','
+        - !GetAtt EndPoint.DnsEntries
