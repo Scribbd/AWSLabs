@@ -40,7 +40,7 @@ Parameters:
 Resources:
 #Setting up the networking of both VPCs
 #VPC with public subnet and IG
-  VPC1:
+  VPCPublic:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: "10.0.0.0/16"
@@ -50,19 +50,20 @@ Resources:
   VPCGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref VPC1
+      VpcId: !Ref VPCPublic
       InternetGatewayId: !Ref InternetGateway
   PublicSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
       AvailabilityZone: !Sub "${AWS::Region}a"
       CidrBlock: "10.0.0.0/24"
-      VpcId: !Ref VPC1
+      VpcId: !Ref VPCPublic
+      MapPublicIpOnLaunch: True
 #Setup RouteTables with public access
   RouteTablePublic:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref VPC1
+      VpcId: !Ref VPCPublic
 #Setup Public Route Rule
   PublicRouteToInternetGateway:
     Type: AWS::EC2::Route
@@ -73,20 +74,20 @@ Resources:
        GatewayId: !Ref InternetGateway
 
 #VPC wihtout public subnet (also no IG)
-  VPC2:
+  VPCPrivate:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: "10.0.0.0/16"
   RouteTablePrivate:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref VPC2
+      VpcId: !Ref VPCPrivate
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
       AvailabilityZone: !Sub "${AWS::Region}a"
       CidrBlock: "10.0.0.0/24"
-      VpcId: !Ref VPC2
+      VpcId: !Ref VPCPrivate
 
 
 #Setting up EC2 resources
@@ -105,7 +106,7 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: "0.0.0.0/0" #All
-      VpcId: !Ref VPC1
+      VpcId: !Ref VPCPublic
   PrivateSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -115,7 +116,7 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: "0.0.0.0/0" #All
-      VpcId: !Ref VPC2
+      VpcId: !Ref VPCPrivate
   S3AccessRole:
     Type: AWS::IAM::Role
     Properties:
@@ -148,9 +149,9 @@ Resources:
       SubnetId: !Ref PublicSubnetA
       SecurityGroupIds:
         - !Ref PublicSecurityGroup
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT5M
+    # CreationPolicy:
+    #   ResourceSignal:
+    #     Timeout: PT5M
   
   WebserverPrivate:
     Type: AWS::EC2::Instance
@@ -176,9 +177,9 @@ Resources:
           EC2NAME=`cat ./names.csv|sort -R|head -n 1|xargs` 
           sed "s/INSTANCE/$EC2NAME/" index.txt > index.html
 
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT5M
+    # CreationPolicy:
+    #   ResourceSignal:
+    #     Timeout: PT5M
 
 #Setting up the Endpoint Service resources
   ElasticLoadBalancer:
@@ -192,10 +193,10 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Port: 80
-      Protocol: HTTP
+      Protocol: TCP
       Targets:
         - Id: !Ref WebserverPrivate
-      VpcId: !Ref VPC2
+      VpcId: !Ref VPCPrivate
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -204,7 +205,7 @@ Resources:
           TargetGroupArn: !Ref TargetGroup
       LoadBalancerArn: !Ref ElasticLoadBalancer
       Port: 80
-      Protocol: HTTP
+      Protocol: TCP
 #Setting up the Endpoint Service
   EndpointService:
     Type: AWS::EC2::VPCEndpointService
@@ -212,19 +213,28 @@ Resources:
       AcceptanceRequired: True
       NetworkLoadBalancerArns: 
         - !Ref ElasticLoadBalancer
-  EndPoint:
-    DependsOn:
-      - ElasticLoadBalancer
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      ServiceName: !Sub com.amazonaws.vpce.${ AWS::Region }.${ !Ref EndpointService }
-      VpcId: !Ref VPC1
-  EndpointPermission:
-    Type: AWS::EC2::VPCEndpointServicePermissions
-    Properties:
-      ServiceId: !Ref EndpointService
-      AllowedPrincipals:
-        - !Ref EndPoint
+  # EndPoint:
+  #   Type: AWS::EC2::VPCEndpoint
+  #   Properties:
+  #     ServiceName: !Sub com.amazonaws.vpce.${ AWS::Region }.${ EndpointService }
+  #     VpcId: !Ref VPCPublic
+  #     RouteTableIds:
+  #       - !Ref RouteTablePublic
+  # EndpointPermission:
+  #   Type: AWS::EC2::VPCEndpointServicePermissions
+  #   Properties:
+  #     ServiceId: !Ref EndpointService
+  #     AllowedPrincipals:
+  #       - !Ref EndPoint
   
 #Give info to
 Outputs:
+  ServiceNameCheck:
+    Description: This is the endpoint name that I generated.
+    Value: !Sub com.amazonaws.vpce.${ AWS::Region }.${ EndpointService }
+  PublicIP:
+    Description: This is the public instance
+    Value: !GetAtt EC2Public.PublicIp
+  SSHCommand:
+    Description: CopyPaste in your ssh console
+    Value: !Sub ssh -i ${ KeyName }.pem ec2user@${ EC2Public.PublicIp }
