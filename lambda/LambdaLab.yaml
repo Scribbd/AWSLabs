@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This is a template to automatically deploy the excersice given in Section 11 Lambda functions
+  by DigitalCloud. This template will deploy a Lambda function with needed roles, 2 s3 buckets, and an sqs.
+Parameters:
+  CodeBucketName:
+    Type: String
+    Default: scribbd
+  SQSCodeBucketKey:
+    Type: String
+    Default: zipped/sqs-function.zip
+  RezCodeBucketKey:
+    Type: String
+    Default: zipped/rez-function.zip
+  ResizeBucket:
+    Type: String
+    Default: scribbd-lab
+
+Resources:
+  LambdaSQSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: For giving the Lab Function SQS access
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+  LambdaS3Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
+  
+  S3IngestLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaRezFunction.Arn
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub 'arn:aws:s3:::${ ResizeBucket }'
+
+  S3Ingest:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ResizeBucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt LambdaRezFunction.Arn
+  S3Output:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ ResizeBucket }-resized
+      
+  SQS:
+    Type: AWS::SQS::Queue
+  
+  #SQS function and its resourcemapping
+  LambdaSQSFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaSQSRole.Arn
+      Runtime: nodejs12.x
+      Code:
+        S3Bucket: !Ref CodeBucketName
+        S3Key: !Ref SQSCodeBucketKey
+  
+  SQSLambdaMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SQS.Arn
+      FunctionName: !GetAtt LambdaSQSFunction.Arn
+
+  #Resize only needs to be defined as it will be called by s3
+  LambdaRezFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaS3Role.Arn
+      Runtime: nodejs12.x
+      Code:
+        S3Bucket: !Ref CodeBucketName
+        S3Key: !Ref RezCodeBucketKey
