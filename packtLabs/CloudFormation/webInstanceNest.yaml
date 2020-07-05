@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This is my first attempt at a nested stack. This will create 1 webservers instance. Requires a VPC.
+  When not given any parameters it will create its own networking resources.
+  And excersize in importing values and conditional creation
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  HostVPC: 
+    Type: AWS::EC2::VPC::Id
+  Subnet:
+    Description: The subnet of the webserver
+    Type: AWS::EC2::Subnet::Id
+  SecurityGroup:
+    Description: The securitygroup of your instance
+    Type: AWS::EC2::SecurityGroup::Id
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: 'AWS::EC2::KeyPair::KeyName'
+  InstanceType:
+    Type: String
+
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - 
+        Label:
+          default: Networking
+        Parameters:
+          - HostVPC
+          - Subnet
+      -
+        Label:
+          default: EC2 Config
+        Parameters:
+          - InstanceType
+          - KeyName
+          - SecurityGroup
+
+Conditions:
+  NeedVPC:
+    Fn::Equals:
+    - ''
+    - Ref: HostVPC
+  NeedSecurityGroup:
+    Fn::Equals:
+    - ''
+    - Ref: SecurityGroup
+  NeedSubnet:
+    Fn::Equals:
+    - ''
+    - Ref: Subnet
+
+Resources:
+#Creation of conditional resources
+  NewVPC:
+    Type: AWS::EC2::VPC
+    Condition: NeedVPC
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      Tags: 
+      - Key: "Name"
+        Value: AutoCreated VPC
+  NewSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: NeedSubnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      CidrBlock: "10.0.1.0/16"
+      VpcId: !If [NeedVPC, !Ref NewVPC, !Ref HostVPC]
+      MapPublicIpOnLaunch: True
+      Tags: 
+      - Key: "Name"
+        Value: AutoCreated Subnet
+  NewPublicSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Condition: NeedSecurityGroup
+    Properties:
+      GroupName: AutoCreated SecGroup
+      GroupDescription: Enables SSH Ingress and HTTP outgress
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0" #All
+      VpcId: !If [NeedVPC, !Ref NewVPC, !Ref HostVPC]
+
+  EC2Public:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      CreditSpecification: #I didn't think this would matter
+        CPUCredits: standard #But I did get charged for 1 cent for this when repeatedly deploying instances in earlier labs.
+      SubnetId: !If [NeedSubnet, !Ref NewSubnet, !Ref Subnet]
+      SecurityGroupIds:
+        - !If [NeedSecurityGroup, !Ref NewPublicSecurityGroup, !Ref SecurityGroup]
+      Tags: 
+      - Key: "Name"
+        Value: 
+          Fn::Join:
+            - ''
+            - - WebServer-
+              - !If [NeedSubnet, !Ref NewSubnet, !Ref Subnet]

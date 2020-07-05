@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This template is to setup the lab enviroment of Packtlab. 
+  This is also en excersize in producing nested stacks. Will create all resources.
+Parameters:
+  WebKeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  WebInstanceType:
+    Description: Select your Free Tier type. (This will most likely be t2.micro, however if you are using Stockholm it must be t3.micro)
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+  S3BucketURL:
+    Type: String
+    Description: The S3 bucket in which contains the file for the nested stack
+    Default: https://scribbd.s3.eu-north-1.amazonaws.com/packtLabs/
+  S3YamlInstanceScriptKey:
+    Type: String
+    Description: The script name.
+    Default: yaml/webInstanceNest.yaml
+  S3YamlNetworkScriptKey:
+    Type: String
+    Description: The script name
+    Default: yaml/networkingNest.yaml
+#Tidy up the interface
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - 
+        Label:
+          default: Nested Scripts
+        Parameters:
+          - S3BucketURL
+          - S3YamlInstanceScriptKey
+          - S3YamlNetworkScriptKey
+      -
+        Label:
+          default: EC2 Config
+        Parameters:
+          - WebInstanceType
+          - WebKeyName
+
+Resources:
+#This nested stack has simple input with a default that doesn't need to be defined. 
+#Its outputs will be used in the next Nested Stacks
+  NestStackNetwork:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${S3BucketURL}${S3YamlNetworkScriptKey}
+      Parameters:
+        EnvironmentName: Lab
+
+#Create a security group common security group for both instances
+  PublicSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupName: WebAndSSH
+      GroupDescription: Enables SSH and HTTP 
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0" #All
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0" #All
+      VpcId: !ImportValue VPC
+#Create a shared role for both instances
+
+
+#The excersize of importing values.
+  NestStackWebInstanceA:
+    DependsOn:
+      - NestStackNetwork
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${S3BucketURL}${S3YamlInstanceScriptKey}
+      Parameters:
+        InstanceType: !Ref WebInstanceType
+        KeyName: !Ref WebKeyName
+        SecurityGroup: !Ref PublicSecurityGroup
+        Subnet: !ImportValue PublicSubnetA
+
+#Basically a copy paste of A with one letter difference (B).
+  NestStackWebInstanceB:
+    DependsOn:
+      - NestStackNetwork
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${S3BucketURL}${S3YamlInstanceScriptKey}

@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This template is to setup the newtorking part of the lab enviroment of Packtlab. 
+  This is also en excersize in producing nested stacks. Will create all resources.
+  Which include a VPC, 2 public subnets, 2 private subnets
+  Will not create NAT-Gateways due to costs.
+  Excersize in parameter exports.
+Parameters:
+  EnvironmentName:
+    Description: Will be used in naming
+    Type: String
+    Default: Lab
+
+Resources:
+#Setting up the VPC and Internet Gateway Access
+  VPCLab:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      EnableDnsHostnames: True
+      Tags: 
+      - Key: "Name"
+        Value: !Sub ${EnvironmentName} VPC
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName} Internet Gateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPCLab
+      InternetGatewayId: !Ref InternetGateway
+#Setting up Subnets
+  #Public
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      CidrBlock: "10.0.1.0/16"
+      VpcId: !Ref VPCLab
+      MapPublicIpOnLaunch: True
+      Tags: 
+      - Key: "Name"
+        Value: !Sub ${EnvironmentName} Public Subnet AZ-a
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      CidrBlock: "10.0.2.0/24"
+      VpcId: !Ref VPCLab
+      MapPublicIpOnLaunch: True
+      Tags: 
+      - Key: "Name"
+        Value: !Sub ${EnvironmentName} Public Subnet AZ-b
+  #Private
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      CidrBlock: "10.0.1.0/16"
+      VpcId: !Ref VPCLab
+      MapPublicIpOnLaunch: False
+      Tags: 
+      - Key: "Name"
+        Value: !Sub ${EnvironmentName} Private Subnet AZ-a
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      CidrBlock: "10.0.2.0/24"
+      VpcId: !Ref VPCLab
+      MapPublicIpOnLaunch: False
+      Tags: 
+      - Key: "Name"
+        Value: !Sub ${EnvironmentName} Private Subnet AZ-b
+
+#Setup RouteTables
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCLab
+      Tags: 
+      - Key: "Name"
+        Value: !Sub ${EnvironmentName} Public RouteTable
+  #Setup Public Route Rule
+  PublicRouteToInternetGateway:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      DestinationCidrBlock: "0.0.0.0/0" #Internet
+      GatewayId: !Ref InternetGateway
+
+#Associate the routetables
+  PublicAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref PublicSubnetA
+  PublicAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref PublicSubnetB
+
+#The outputs. The reason of this template.
+#As this is used in a nested fashion. I don't need to use export. Export is for cross-stack reference.
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPCLab
+  PublicSubnetA:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref PublicSubnetA
+  PublicSubnetB:
+    Description: A reference to the public subnet in the 2nd Availability Zone
+    Value: !Ref PublicSubnetB
+  PrivateSubnetA:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Value: !Ref PrivateSubnetA
+  PrivateSubnetB:
+    Description: A reference to the private subnet in the 2nd Availability Zone
+    Value: !Ref PrivateSubnetB
